@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}Hasil Akhir — WHR 2024{% endblock %}
+{% block content %}
+<div class="page">
+  <div class="section-header"> Ringkasan Hasil Akhir Perbandingan</div>
+
+  <div class="spinner" id="spinner"><div class="spin"></div><p>Memuat data hasil analisis…</p></div>
+  <div id="content" style="display:none;">
+
+    <!-- Visualisasi Cluster Side by Side -->
+    <div class="card">
+      <div class="card-title"> Visualisasi Cluster: DBSCAN vs GMM (PCA 2D)</div>
+      <img id="plot-cluster" class="plot-img" src="" alt="Cluster Plot">
+    </div>
+
+    <!-- Tabel Perbandingan Metrik -->
+    <div class="card">
+      <div class="card-title"> Tabel Perbandingan Metrik Evaluasi</div>
+      <table class="tbl">
+        <thead><tr><th>Metrik Evaluasi</th><th>DBSCAN</th><th>GMM</th><th>Algoritma Lebih Baik</th></tr></thead>
+        <tbody id="eval-table"></tbody>
+      </table>
+      <p style="font-size:12px;color:#888;margin-top:8px;">
+        ↑ Silhouette & Calinski-Harabasz: nilai lebih tinggi = lebih baik &nbsp;|&nbsp;
+        ↓ Davies-Bouldin: nilai lebih rendah = lebih baik
+      </p>
+    </div>
+
+    <!-- Kesimpulan Singkat -->
+    <div class="card" style="border-left:5px solid var(--primary);">
+      <div class="card-title"> Kesimpulan Singkat</div>
+      <div id="kesimpulan" style="font-size:14px;line-height:1.8;color:#333;"></div>
+    </div>
+
+    <!-- Bar Chart Evaluasi -->
+    <div class="card">
+      <div class="card-title"> Visualisasi Perbandingan Metrik</div>
+      <img id="plot-eval" class="plot-img" src="" alt="Eval Bars">
+    </div>
+
+    <!-- Analisis Anomali -->
+    <div class="section-header" style="margin-top:8px;"> Analisis Anomali Negara</div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px;" id="anomali-cards"></div>
+
+    <div class="card">
+      <div class="card-title"> Visualisasi Anomali</div>
+      <img id="plot-anomali" class="plot-img" src="" alt="Anomali Plot">
+    </div>
+
+    <!-- Parameter Detail -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:8px;">
+      <div class="card" style="border-top:3px solid #2196F3;">
+        <div class="card-title"> Detail Parameter DBSCAN</div>
+        <table class="tbl">
+          <tbody id="db-params"></tbody>
+        </table>
+      </div>
+      <div class="card" style="border-top:3px solid #FF5722;">
+        <div class="card-title"> Detail Parameter GMM</div>
+        <table class="tbl">
+          <tbody id="gmm-params"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="text-align:right;margin-top:12px;">
+      <a href="/laporan" class="btn btn-primary"> Lihat Laporan Lengkap →</a>
+      &nbsp;
+      <a href="/api/download_csv" class="btn btn-outline">⬇ Download CSV</a>
+    </div>
+  </div>
+</div>
+
+<script>
+const ANOMALI_CHIP = {
+  'Miskin tapi Senang':'chip-senang','Kaya tapi Sedih':'chip-sedih',
+  'Korupsi Tinggi tapi Bahagia':'chip-korupsi','Bersih tapi Tidak Bahagia':'chip-bersih',
+  'Miskin tapi Dermawan':'chip-dermawan','Kaya tapi Pelit':'chip-pelit',
+};
+const ANOMALI_ICON = {
+  'Miskin tapi Senang':'😊','Kaya tapi Sedih':'😢',
+  'Korupsi Tinggi tapi Bahagia':'🤔','Bersih tapi Tidak Bahagia':'😕',
+  'Miskin tapi Dermawan':'❤️','Kaya tapi Pelit':'💰',
+};
+
+async function load() {
+  document.getElementById('spinner').style.display='block';
+  const res = await fetch('/api/hasil');
+  const data = await res.json();
+  document.getElementById('spinner').style.display='none';
+  document.getElementById('content').style.display='block';
+
+  // Plots
+  document.getElementById('plot-cluster').src = 'data:image/png;base64,' + data.plots.cluster_compare;
+  document.getElementById('plot-eval').src = 'data:image/png;base64,' + data.plots.eval_bars;
+  document.getElementById('plot-anomali').src = 'data:image/png;base64,' + data.plots.anomali;
+
+  const db = data.dbscan; const gm = data.gmm; const w = data.winner;
+
+  // Eval table
+  const rows = [
+    ['Silhouette Score (↑)', db.silhouette, gm.silhouette, w.silhouette, true],
+    ['Davies-Bouldin Index (↓)', db.davies_bouldin, gm.davies_bouldin, w.davies_bouldin, false],
+    ['Calinski-Harabasz Index (↑)', db.calinski_harabasz, gm.calinski_harabasz, w.calinski_harabasz, true],
+  ];
+  let tHTML = '';
+  for (const [metric, dv, gv, winner, hi] of rows) {
+    const db_better = winner==='DBSCAN';
+    tHTML += `<tr>
+      <td>${metric}</td>
+      <td class="${db_better?'better':''}">${dv}</td>
+      <td class="${!db_better?'better':''}">${gv}</td>
+      <td>${db_better?'<span class="badge badge-db">DBSCAN ✓</span>':'<span class="badge badge-gmm">GMM ✓</span>'}</td>
+    </tr>`;
+  }
+  document.getElementById('eval-table').innerHTML = tHTML;
+
+  // Kesimpulan
+  const dbWins = [w.silhouette, w.davies_bouldin, w.calinski_harabasz].filter(x=>x==='DBSCAN').length;
+  const gmmWins = 3 - dbWins;
+  const best = dbWins >= gmmWins ? 'DBSCAN' : 'GMM';
+  document.getElementById('kesimpulan').innerHTML = `
+    <p>Berdasarkan evaluasi tiga metrik internal clustering, <strong>${best}</strong> menunjukkan performa yang lebih unggul secara keseluruhan (menang ${Math.max(dbWins,gmmWins)} dari 3 metrik).</p>
+    <p style="margin-top:10px;">
+      • DBSCAN mengidentifikasi <strong>${db.n_clusters} cluster</strong> dengan ${db.n_noise} negara sebagai <em>noise/outlier</em> (ε=${db.eps}, MinPts=${db.min_samples}).<br>
+      • GMM menghasilkan <strong>${gm.n_components} cluster</strong> dengan probabilitas keanggotaan rata-rata ${gm.mean_prob} (soft clustering).
+    </p>
+    <p style="margin-top:10px;">DBSCAN unggul dalam mendeteksi outlier secara eksplisit (negara dengan profil unik), sementara GMM memberikan fleksibilitas melalui probabilitas keanggotaan yang tidak biner.</p>
+  `;
+
+  // Anomali cards
+  const an = data.anomali_summary;
+  let cardHTML = '';
+  for (const [col, types] of Object.entries(an)) {
+    for (const [tipe, negara] of Object.entries(types)) {
+      const chip = ANOMALI_CHIP[tipe] || 'chip-senang';
+      const icon = ANOMALI_ICON[tipe] || '🔍';
+      cardHTML += `<div class="card" style="border-top:3px solid #1565C0;">
+        <div style="font-size:22px;margin-bottom:8px;">${icon}</div>
+        <div class="card-title" style="font-size:13px;">${tipe}</div>
+        <div style="font-size:12px;color:#888;margin-bottom:10px;">${negara.length} negara</div>
+        ${negara.slice(0,6).map(n=>`<span class="anomali-chip ${chip}">${n['Country name']}</span>`).join('')}
+        ${negara.length>6?`<span style="font-size:11px;color:#888;"> +${negara.length-6} lainnya</span>`:''}
+      </div>`;
+    }
+  }
+  document.getElementById('anomali-cards').innerHTML = cardHTML;
+
+  // Params
+  document.getElementById('db-params').innerHTML = `
+    <tr><td>Epsilon (ε)</td><td><strong>${db.eps}</strong></td></tr>
+    <tr><td>MinPts</td><td><strong>${db.min_samples}</strong></td></tr>
+    <tr><td>Jumlah Cluster</td><td><strong>${db.n_clusters}</strong></td></tr>
+    <tr><td>Noise / Outlier</td><td><strong>${db.n_noise} negara</strong></td></tr>
+  `;
+  document.getElementById('gmm-params').innerHTML = `
+    <tr><td>n_components</td><td><strong>${gm.n_components}</strong></td></tr>
+    <tr><td>Covariance Type</td><td><strong>${gm.covariance_type}</strong></td></tr>
+    <tr><td>Mean Probability</td><td><strong>${gm.mean_prob}</strong></td></tr>
+    <tr><td>Jumlah Cluster</td><td><strong>${gm.n_components}</strong></td></tr>
+  `;
+}
+load();
+</script>
+{% endblock %}

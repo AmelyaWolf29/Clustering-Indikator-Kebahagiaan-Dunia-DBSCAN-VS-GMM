@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — WHR 2024{% endblock %}
+{% block content %}
+<div class="page">
+  <div class="section-header"> Dashboard Analisis Clustering</div>
+
+  <div style="display:grid;grid-template-columns:300px 1fr;gap:20px;align-items:start;">
+
+    <!-- Sidebar Parameter -->
+    <div>
+      <div class="card" style="border-top:4px solid #2196F3;">
+        <div class="card-title"> Parameter DBSCAN</div>
+        <div class="form-group">
+          <label>Epsilon (ε): <span id="eps_label" style="color: red; font-weight: bold;">0.5</span></label>
+          <input type="range" class="form-control" id="eps_input" step="0.1" min="0.1" max="2.0" value="0.5" 
+          oninput="document.getElementById('eps_label').innerText = this.value">
+        </div>
+        <div class="form-group">
+          <label>Minimum Points (MinPts): <span id="min_s_label" style="color: red; font-weight: bold;">4</span></label>
+          <input type="range" class="form-control" id="min_s_input" step="1" min="2" max="10" value="4" 
+          oninput="document.getElementById('min_s_label').innerText = this.value">
+        </div>
+      </div>
+
+      <div class="card" style="border-top:4px solid #FF5722;">
+        <div class="card-title"> Parameter GMM</div>
+        <div class="form-group">
+          <label>n_components: <span id="gmm_n_label" style="color: red; font-weight: bold;">3</span></label>
+          <input type="range" class="form-control" id="gmm_n_input" step="1" min="2" max="10" value="3" 
+          oninput="document.getElementById('gmm_n_label').innerText = this.value">
+        </div>
+        <div class="form-group">
+          <label>Covariance Type</label>
+          <select class="form-control" id="gmm_cov">
+            <option value="full" selected>full (default)</option>
+            <option value="tied">tied</option>
+            <option value="diag">diag</option>
+            <option value="spherical">spherical</option>
+          </select>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" style="width:100%;justify-content:center;padding:13px;" onclick="runAnalysis()">
+        ▶ Jalankan Analisis
+      </button>
+      <div style="text-align:center;margin-top:10px;">
+        <small style="color:#888;">Proses: 10–20 detik (auto-tuning)</small>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div id="main-content">
+      <!-- Spinner (Memuat Proses) -->
+      <div class="spinner" id="spinner">
+        <div class="spin"></div>
+        <p style="color:#888;">Menjalankan DBSCAN & GMM, mohon tunggu…</p>
+      </div>
+
+      <!-- PlaceHolder -->
+      <div id="placeholder" class="card" style="text-align:center;padding:60px;color:#aaa;">
+        <p style="font-size:15px;">Klik <strong>▶ Jalankan Analisis</strong> untuk memulai</p>
+        <p style="font-size:13px;margin-top:8px;">Parameter kosong = auto-tuning optimal</p>
+      </div>
+
+      <!-- Results (hidden until run) -->
+      <div id="results" style="display:none;">
+
+        <!-- Ringkasan Parameter & Cluster -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+          <div class="card" style="border-top:3px solid #2196F3;">
+            <div class="card-title"> Hasil DBSCAN</div>
+            <div class="metric-grid">
+              <div class="metric-item"><div class="val val-db" id="d-eps">—</div><div class="lbl">Epsilon (ε)</div></div>
+              <div class="metric-item"><div class="val val-db" id="d-min">—</div><div class="lbl">MinPts</div></div>
+              <div class="metric-item"><div class="val val-db" id="d-ncl">—</div><div class="lbl">Jumlah Cluster</div></div>
+              <div class="metric-item"><div class="val" style="color:#F44336;" id="d-noise">—</div><div class="lbl">Noise/Outlier</div></div>
+            </div>
+          </div>
+          <div class="card" style="border-top:3px solid #FF5722;">
+            <div class="card-title"> Hasil GMM</div>
+            <div class="metric-grid">
+              <div class="metric-item"><div class="val val-gmm" id="g-nc">—</div><div class="lbl">n_components</div></div>
+              <div class="metric-item"><div class="val val-gmm" id="g-cov">—</div><div class="lbl">Covariance Type</div></div>
+              <div class="metric-item"><div class="val val-gmm" id="g-prob">—</div><div class="lbl">Mean Prob.</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Visualisasi Cluster -->
+        <div class="card">
+          <div class="card-title"> Visualisasi Cluster (PCA 2D)</div>
+          <img id="plot-cluster" class="plot-img" src="" alt="Cluster Plot">
+        </div>
+
+        <!-- Metrik Evaluasi -->
+        <div class="card">
+          <div class="card-title"> Metrik Evaluasi Model</div>
+          <table class="tbl">
+            <thead>
+              <tr><th>Metrik</th><th>DBSCAN</th><th>GMM</th><th>Lebih Baik</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Silhouette Score (↑)</td>
+                <td id="m-db-sil">—</td><td id="m-gm-sil">—</td>
+                <td id="m-win-sil">—</td>
+              </tr>
+              <tr>
+                <td>Davies-Bouldin Index (↓)</td>
+                <td id="m-db-dbi">—</td><td id="m-gm-dbi">—</td>
+                <td id="m-win-dbi">—</td>
+              </tr>
+              <tr>
+                <td>Calinski-Harabasz Index (↑)</td>
+                <td id="m-db-chi">—</td><td id="m-gm-chi">—</td>
+                <td id="m-win-chi">—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Bar Chart Evaluasi -->
+        <div class="card">
+          <div class="card-title"> Perbandingan Metrik Visualisasi</div>
+          <img id="plot-eval" class="plot-img" src="" alt="Eval Chart">
+        </div>
+
+        <!-- Kurva BIC -->
+        <div class="card">
+          <div class="card-title">Kurva BIC — Pemilihan n_components GMM</div>
+          <img id="plot-bic" class="plot-img" src="" alt="BIC Curve">
+        </div>
+
+        <div style="text-align:right;margin-top:8px;">
+          <a href="/hasil" class="btn btn-primary">Lihat Hasil Akhir Lengkap →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function runAnalysis() {
+  document.getElementById('placeholder').style.display = 'none';
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('spinner').style.display = 'block';
+
+  const payload = {
+    eps: document.getElementById('eps_input').value   || null,
+    min_s: document.getElementById('min_s_input').value || null,
+    gmm_n: document.getElementById('gmm_n_input').value || null,
+    gmm_cov: document.getElementById('gmm_cov').value,
+  };
+
+  try {
+    const res = await fetch('/api/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const data = await res.json();
+    if (data.error) { alert('Error: ' + data.error); return; }
+
+    const db = data.dbscan; const gm = data.gmm;
+
+    // DBSCAN info
+    document.getElementById('d-eps').textContent = db.eps;
+    document.getElementById('d-min').textContent = db.min_samples;
+    document.getElementById('d-ncl').textContent = db.n_clusters;
+    document.getElementById('d-noise').textContent = db.n_noise;
+
+    // GMM info
+    document.getElementById('g-nc').textContent = gm.n_components;
+    document.getElementById('g-cov').textContent = gm.covariance_type;
+    document.getElementById('g-prob').textContent = gm.mean_prob;
+
+    // Metrik
+    const fmtWin = (db_val, gm_val, higher_is_better) => {
+      const db_wins = higher_is_better ? db_val > gm_val : db_val < gm_val;
+      return db_wins ? '<span class="badge badge-db">DBSCAN</span>' : '<span class="badge badge-gmm">GMM</span>';
+    };
+    document.getElementById('m-db-sil').textContent = db.silhouette;
+    document.getElementById('m-gm-sil').textContent = gm.silhouette;
+    document.getElementById('m-win-sil').innerHTML = fmtWin(db.silhouette, gm.silhouette, true);
+
+    document.getElementById('m-db-dbi').textContent = db.davies_bouldin;
+    document.getElementById('m-gm-dbi').textContent = gm.davies_bouldin;
+    document.getElementById('m-win-dbi').innerHTML = fmtWin(db.davies_bouldin, gm.davies_bouldin, false);
+
+    document.getElementById('m-db-chi').textContent = db.calinski_harabasz;
+    document.getElementById('m-gm-chi').textContent = gm.calinski_harabasz;
+    document.getElementById('m-win-chi').innerHTML = fmtWin(db.calinski_harabasz, gm.calinski_harabasz, true);
+
+    // Plots
+    document.getElementById('plot-cluster').src = 'data:image/png;base64,' + data.plots.cluster_compare;
+    document.getElementById('plot-eval').src = 'data:image/png;base64,' + data.plots.eval_bars;
+    if (data.plots.bic_curve)
+      document.getElementById('plot-bic').src = 'data:image/png;base64,' + data.plots.bic_curve;
+
+    document.getElementById('spinner').style.display = 'none';
+    document.getElementById('results').style.display = 'block';
+  } catch(e) {
+    alert('Terjadi error: ' + e.message);
+    document.getElementById('spinner').style.display = 'none';
+    document.getElementById('placeholder').style.display = 'block';
+  }
+}
+</script>
+{% endblock %}

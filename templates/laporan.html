@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}Laporan — WHR 2024{% endblock %}
+{% block content %}
+<div class="page">
+  <div class="section-header"> Laporan Analisis Lengkap</div>
+  <div class="spinner" id="spinner"><div class="spin"></div><p>Memuat laporan…</p></div>
+  <div id="content" style="display:none;">
+
+    <!-- Header Laporan -->
+    <div class="card" style="background:linear-gradient(135deg,#1565C0,#0D47A1);color:#fff;">
+      <h2 style="font-size:17px;font-weight:800;margin-bottom:6px;">
+        Perbandingan Algoritma DBSCAN dan Gaussian Mixture Model<br>
+        dalam Pengelompokan Negara Berdasarkan Indikator Kebahagiaan Dunia
+      </h2>
+      <p style="opacity:.8;font-size:13px;">Dataset: World Happiness Report 2024 &nbsp;|&nbsp; 143 Negara &nbsp;|&nbsp; 6 Indikator</p>
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;" id="header-badges"></div>
+    </div>
+
+    <!-- Metrik Evaluasi -->
+    <div class="card">
+      <div class="card-title"> Hasil Evaluasi Model</div>
+      <table class="tbl">
+        <thead><tr><th>Metrik</th><th>DBSCAN</th><th>GMM</th><th>Keterangan</th><th>Lebih Baik</th></tr></thead>
+        <tbody id="eval-tbl"></tbody>
+      </table>
+    </div>
+
+    <!-- Tab Kategori Variabel -->
+    <div class="card">
+      <div class="card-title"> Kategorisasi per Variabel Indikator (GMM Univariat)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;" id="var-tabs"></div>
+      <div id="var-content"></div>
+    </div>
+
+    <!-- Analisis Anomali Lengkap -->
+    <div class="card">
+      <div class="card-title"> Analisis Anomali Negara</div>
+      <div id="anomali-full"></div>
+    </div>
+
+    <!-- Visualisasi -->
+    <div class="card">
+      <div class="card-title"> Visualisasi Cluster</div>
+      <img id="p-cluster" class="plot-img" src="" alt="">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="card"><div class="card-title"> Anomali Plot</div><img id="p-anomali" class="plot-img" src="" alt=""></div>
+      <div class="card"><div class="card-title"> BIC Curve GMM</div><img id="p-bic" class="plot-img" src="" alt=""></div>
+    </div>
+
+    <div style="text-align:right;margin-top:16px;">
+      <button onclick="window.print()" class="btn btn-outline">🖨️ Print / Simpan PDF</button>
+      &nbsp;
+      <a href="/api/download_csv" class="btn btn-primary">⬇ Download CSV</a>
+    </div>
+  </div>
+</div>
+
+<style>
+  .tab-btn {
+    padding:7px 16px; border-radius:20px; border:2px solid #ddd;
+    background:#fff; font-size:13px; cursor:pointer; font-weight:600; transition:.2s;
+  }
+  .tab-btn.active { background:#1565C0; color:#fff; border-color:#1565C0; }
+  .var-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .var-table th { background:#1565C0; color:#fff; padding:8px 12px; text-align:left; }
+  .var-table td { padding:7px 12px; border-bottom:1px solid #eee; }
+  .var-table tr:hover td { background:#F3F8FF; }
+</style>
+
+<script>
+const VAR_LABELS = {
+  'GDP_Kategori': {label:'GDP per Kapita', cats:['Miskin','Menengah','Kaya'], col:'Log GDP per capita'},
+  'Sosial_Kategori': {label:'Dukungan Sosial', cats:['Sosial Rendah','Sosial Sedang','Sosial Tinggi'], col:'Social support'},
+  'Healthy_Kategori': {label:'Harapan Hidup', cats:['Sehat Rendah','Sehat Sedang','Sehat Tinggi'], col:'Healthy life expectancy'},
+  'Freedom_Kategori': {label:'Kebebasan', cats:['Bebas Rendah','Bebas Sedang','Bebas Tinggi'], col:'Freedom to make life choices'},
+  'Generosity_Kategori': {label:'Generosity', cats:['Kurang Dermawan','Netral','Dermawan'], col:'Generosity'},
+  'Corruption_Kategori': {label:'Korupsi', cats:['Tinggi Korupsi','Korupsi Sedang','Rendah Korupsi'], col:'Perceptions of corruption'},
+};
+
+let _data = null;
+let _activeVar = 'GDP_Kategori';
+
+async function load() {
+  document.getElementById('spinner').style.display='block';
+  const res = await fetch('/api/laporan');
+  _data = await res.json();
+  document.getElementById('spinner').style.display='none';
+  document.getElementById('content').style.display='block';
+  render();
+}
+
+function render() {
+  const {dbscan:db, gmm:gm, plots, cat_summary, anomali_summary, n_countries} = _data;
+
+  // Header badges
+  document.getElementById('header-badges').innerHTML = `
+    <span style="background:rgba(255,255,255,.2);padding:4px 12px;border-radius:20px;font-size:12px;">🔵 DBSCAN: ε=${db.eps}, MinPts=${db.min_samples}, ${db.n_clusters} cluster, ${db.n_noise} noise</span>
+    <span style="background:rgba(255,255,255,.2);padding:4px 12px;border-radius:20px;font-size:12px;">🟠 GMM: n=${gm.n_components}, type=${gm.covariance_type}, prob=${gm.mean_prob}</span>
+    <span style="background:rgba(255,255,255,.2);padding:4px 12px;border-radius:20px;font-size:12px;">🌍 ${n_countries} Negara</span>
+  `;
+
+  // Evaluasi table
+  const evalRows = [
+    ['Silhouette Score','↑ lebih baik', db.silhouette, gm.silhouette, db.silhouette > gm.silhouette ? 'DBSCAN':'GMM'],
+    ['Davies-Bouldin Index','↓ lebih baik', db.davies_bouldin, gm.davies_bouldin, db.davies_bouldin < gm.davies_bouldin ? 'DBSCAN':'GMM'],
+    ['Calinski-Harabasz','↑ lebih baik', db.calinski_harabasz, gm.calinski_harabasz, db.calinski_harabasz > gm.calinski_harabasz ? 'DBSCAN':'GMM'],
+  ];
+  document.getElementById('eval-tbl').innerHTML = evalRows.map(([m,k,dv,gv,w])=>`
+    <tr>
+      <td><strong>${m}</strong></td>
+      <td class="${w==='DBSCAN'?'better':''}">${dv}</td>
+      <td class="${w==='GMM'?'better':''}">${gv}</td>
+      <td style="color:#888;font-size:12px;">${k}</td>
+      <td>${w==='DBSCAN'?'<span class="badge badge-db">DBSCAN ✓</span>':'<span class="badge badge-gmm">GMM ✓</span>'}</td>
+    </tr>`).join('');
+
+  // Var tabs
+  const tabsEl = document.getElementById('var-tabs');
+  tabsEl.innerHTML = Object.entries(VAR_LABELS).map(([k,v])=>
+    `<button class="tab-btn ${k===_activeVar?'active':''}" onclick="switchVar('${k}')">${v.label}</button>`
+  ).join('');
+  renderVarTable();
+
+  // Anomali
+  let anomHTML = '';
+  const chipMap = {
+    'Miskin tapi Senang':'chip-senang','Kaya tapi Sedih':'chip-sedih',
+    'Korupsi Tinggi tapi Bahagia':'chip-korupsi','Bersih tapi Tidak Bahagia':'chip-bersih',
+    'Miskin tapi Dermawan':'chip-dermawan','Kaya tapi Pelit':'chip-pelit',
+  };
+  for (const [col, types] of Object.entries(anomali_summary)) {
+    for (const [tipe, negara] of Object.entries(types)) {
+      if (!negara.length) continue;
+      const chip = chipMap[tipe] || '';
+      anomHTML += `<div style="margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+          <span class="anomali-chip ${chip}" style="font-size:13px;">${tipe}</span>
+          <span style="font-size:12px;color:#888;">${negara.length} negara</span>
+        </div>
+        <table class="var-table">
+          <thead><tr><th>Negara</th><th>Ladder Score</th><th>GDP</th><th>Korupsi</th><th>Generosity</th></tr></thead>
+          <tbody>
+            ${negara.map(n=>`<tr>
+              <td><strong>${n['Country name']}</strong></td>
+              <td>${n['Ladder score']?.toFixed(3)??'-'}</td>
+              <td>${n['Log GDP per capita']?.toFixed(3)??'-'}</td>
+              <td>${n['Perceptions of corruption']?.toFixed(3)??'-'}</td>
+              <td>${n['Generosity']?.toFixed(3)??'-'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+    }
+  }
+  document.getElementById('anomali-full').innerHTML = anomHTML || '<p style="color:#aaa;">Tidak ada anomali terdeteksi.</p>';
+
+  // Plots
+  document.getElementById('p-cluster').src = 'data:image/png;base64,'+plots.cluster_compare;
+  document.getElementById('p-anomali').src = 'data:image/png;base64,'+plots.anomali;
+  if (plots.bic_curve) document.getElementById('p-bic').src = 'data:image/png;base64,'+plots.bic_curve;
+}
+
+function switchVar(key) {
+  _activeVar = key;
+  document.querySelectorAll('.tab-btn').forEach(b=>{
+    b.classList.toggle('active', b.textContent === VAR_LABELS[key].label);
+  });
+  renderVarTable();
+}
+
+function renderVarTable() {
+  const {label, cats, col} = VAR_LABELS[_activeVar];
+  const cat = _data.cat_summary[_activeVar];
+  if (!cat) { document.getElementById('var-content').innerHTML='<p>Data tidak tersedia.</p>'; return; }
+  let html = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;">`;
+  for (const kat of cats) {
+    const neg = cat[kat] || [];
+    const COLOR_MAP = {'Miskin':'#FFEBEE','Menengah':'#FFF8E1','Kaya':'#E8F5E9',
+      'Sosial Rendah':'#FFEBEE','Sosial Sedang':'#FFF8E1','Sosial Tinggi':'#E8F5E9',
+      'Sehat Rendah':'#FFEBEE','Sehat Sedang':'#FFF8E1','Sehat Tinggi':'#E8F5E9',
+      'Bebas Rendah':'#FFEBEE','Bebas Sedang':'#FFF8E1','Bebas Tinggi':'#E8F5E9',
+      'Kurang Dermawan':'#FFEBEE','Netral':'#FFF8E1','Dermawan':'#E8F5E9',
+      'Tinggi Korupsi':'#FFEBEE','Korupsi Sedang':'#FFF8E1','Rendah Korupsi':'#E8F5E9',
+    };
+    html += `<div style="background:${COLOR_MAP[kat]||'#F5F7FA'};border-radius:8px;padding:14px;">
+      <div style="font-weight:800;font-size:13px;margin-bottom:4px;">${kat}</div>
+      <div style="font-size:12px;color:#666;margin-bottom:10px;">${neg.length} negara</div>
+      <table class="var-table" style="background:white;">
+        <thead><tr><th>#</th><th>Negara</th><th>${col}</th></tr></thead>
+        <tbody>
+          ${neg.slice(0,10).map((n,i)=>`<tr>
+            <td style="color:#aaa;">${i+1}</td>
+            <td>${n['Country name']}</td>
+            <td>${n[col]?.toFixed(3)??'-'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  }
+  html += '</div>';
+  document.getElementById('var-content').innerHTML = html;
+}
+
+load();
+</script>
+{% endblock %}
